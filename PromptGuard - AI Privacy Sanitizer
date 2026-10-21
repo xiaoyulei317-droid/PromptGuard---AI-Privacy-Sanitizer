@@ -1,0 +1,1076 @@
+Plaintext
+index.html
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>PromptGuard - AI Privacy Sanitizer</title>
+  <meta name="description" content="Remove emails, phone numbers, IP addresses, API keys and custom keywords from text before sharing it with an AI. Runs entirely in your browser." />
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🛡️</text></svg>" />
+
+  <!-- Apply the saved (or system) theme before first paint to avoid a flash -->
+  <script>
+    (function () {
+      var saved = null;
+      try { saved = localStorage.getItem('promptguard-theme'); } catch (e) {}
+      var prefersDark = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
+      if (saved === 'dark' || (!saved && prefersDark)) document.documentElement.classList.add('dark');
+    })();
+  </script>
+
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      darkMode: 'class',
+      theme: {
+        extend: {
+          fontFamily: {
+            sans: ['Inter', 'ui-sans-serif', 'system-ui', '-apple-system', 'Segoe UI', 'Roboto', 'Helvetica Neue', 'Arial', 'sans-serif'],
+            mono: ['JetBrains Mono', 'ui-monospace', 'SFMono-Regular', 'Cascadia Code', 'Consolas', 'Menlo', 'monospace'],
+          },
+        },
+      },
+    };
+  </script>
+
+  <style>
+    :root { color-scheme: light; }
+    html.dark { color-scheme: dark; }
+
+    /* ---------- Rule colors ---------- */
+    [data-rule="email"],   .dot-email,   .tag-email   { --rule: #3b82f6; }
+    [data-rule="phone"],   .dot-phone,   .tag-phone   { --rule: #10b981; }
+    [data-rule="ip"],      .dot-ip,      .tag-ip      { --rule: #f59e0b; }
+    [data-rule="apikey"],  .dot-apikey,  .tag-apikey  { --rule: #f43f5e; }
+    [data-rule="keyword"], .dot-keyword, .tag-keyword { --rule: #8b5cf6; }
+
+    .dot {
+      display: inline-block;
+      width: 0.5rem;
+      height: 0.5rem;
+      border-radius: 9999px;
+      background: var(--rule, #94a3b8);
+      flex-shrink: 0;
+    }
+
+    /* ---------- Rule toggle switches ---------- */
+    .switch {
+      position: relative;
+      width: 2rem;
+      height: 1.125rem;
+      flex-shrink: 0;
+      border-radius: 9999px;
+      background: #cbd5e1;
+      transition: background-color 0.2s ease;
+    }
+    .dark .switch { background: #334155; }
+    .knob {
+      position: absolute;
+      top: 2px;
+      left: 2px;
+      width: 0.875rem;
+      height: 0.875rem;
+      border-radius: 9999px;
+      background: #fff;
+      box-shadow: 0 1px 2px rgb(0 0 0 / 0.25);
+      transition: transform 0.2s ease;
+    }
+    .rule-toggle[aria-checked="true"] .switch { background: var(--rule); }
+    .rule-toggle[aria-checked="true"] .knob { transform: translateX(0.875rem); }
+    .rule-toggle[aria-checked="true"] {
+      border-color: color-mix(in srgb, var(--rule) 55%, transparent);
+      background-color: color-mix(in srgb, var(--rule) 7%, transparent);
+    }
+    .rule-toggle[aria-checked="false"] .rule-text { opacity: 0.55; }
+
+    .count-badge {
+      min-width: 1.6rem;
+      padding: 0.1rem 0.45rem;
+      border-radius: 9999px;
+      font-size: 0.7rem;
+      font-weight: 600;
+      text-align: center;
+      font-variant-numeric: tabular-nums;
+      color: var(--rule);
+      background: color-mix(in srgb, var(--rule) 14%, transparent);
+    }
+
+    /* ---------- Redaction tags in the output ---------- */
+    mark.tag {
+      border-radius: 0.3rem;
+      padding: 0.05rem 0.25rem;
+      font-weight: 600;
+      background: color-mix(in srgb, var(--rule) 15%, transparent);
+      box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--rule) 30%, transparent);
+    }
+    .tag-email   { color: #1d4ed8; }
+    .tag-phone   { color: #047857; }
+    .tag-ip      { color: #b45309; }
+    .tag-apikey  { color: #be123c; }
+    .tag-keyword { color: #6d28d9; }
+    .dark .tag-email   { color: #93c5fd; }
+    .dark .tag-phone   { color: #6ee7b7; }
+    .dark .tag-ip      { color: #fcd34d; }
+    .dark .tag-apikey  { color: #fda4af; }
+    .dark .tag-keyword { color: #c4b5fd; }
+
+    .output-placeholder {
+      color: #94a3b8;
+      font-family: ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+    }
+    .dark .output-placeholder { color: #64748b; }
+
+    /* ---------- Breakdown chips under "Items Redacted" ---------- */
+    .mini-chip {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.35rem;
+      padding: 0.15rem 0.5rem;
+      border-radius: 9999px;
+      font-weight: 500;
+      color: #475569;
+      background: #f1f5f9;
+    }
+    .dark .mini-chip { color: #cbd5e1; background: #1e293b; }
+
+    /* ---------- Custom keyword chips ---------- */
+    .kw-chip {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.25rem;
+      max-width: 100%;
+      padding: 0.2rem 0.3rem 0.2rem 0.65rem;
+      border-radius: 9999px;
+      font-size: 0.75rem;
+      font-weight: 500;
+      color: #5b21b6;
+      background: #ede9fe;
+    }
+    .dark .kw-chip { color: #ddd6fe; background: rgb(139 92 246 / 0.2); }
+    .kw-chip .kw-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .kw-chip button {
+      display: grid;
+      place-items: center;
+      width: 1.15rem;
+      height: 1.15rem;
+      flex-shrink: 0;
+      border-radius: 9999px;
+      color: inherit;
+      opacity: 0.7;
+    }
+    .kw-chip button:hover { opacity: 1; background: rgb(139 92 246 / 0.2); }
+    .kw-chip button:focus-visible { outline: 2px solid #8b5cf6; outline-offset: 1px; }
+    #keywordPanel.is-disabled { opacity: 0.55; }
+
+    /* ---------- Toast ---------- */
+    .toast {
+      position: fixed;
+      left: 50%;
+      bottom: 1.5rem;
+      z-index: 50;
+      max-width: calc(100vw - 2rem);
+      transform: translate(-50%, 1rem);
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity 0.2s ease, transform 0.2s ease;
+    }
+    .toast.show { opacity: 1; transform: translate(-50%, 0); }
+
+    /* ---------- Thin scrollbars for the editors ---------- */
+    .scroll-thin { scrollbar-width: thin; scrollbar-color: rgb(148 163 184 / 0.5) transparent; }
+    .scroll-thin::-webkit-scrollbar { width: 10px; height: 10px; }
+    .scroll-thin::-webkit-scrollbar-thumb {
+      border: 3px solid transparent;
+      border-radius: 9999px;
+      background: rgb(148 163 184 / 0.5);
+      background-clip: content-box;
+    }
+
+    .drag-over { box-shadow: inset 0 0 0 2px #6366f1; }
+  </style>
+</head>
+
+<body class="min-h-screen bg-slate-50 font-sans text-slate-800 antialiased transition-colors duration-200 dark:bg-slate-950 dark:text-slate-200">
+  <!-- Soft background glow -->
+  <div class="pointer-events-none fixed inset-x-0 top-0 -z-10 h-80 bg-gradient-to-b from-indigo-100/70 to-transparent dark:from-indigo-950/40"></div>
+
+  <!-- ==================== Header ==================== -->
+  <header class="sticky top-0 z-30 border-b border-slate-200/80 bg-white/80 backdrop-blur dark:border-slate-800/80 dark:bg-slate-950/80">
+    <div class="mx-auto flex h-16 max-w-7xl items-center justify-between gap-3 px-4 sm:px-6 lg:px-8">
+      <div class="flex min-w-0 items-center gap-3">
+        <div class="grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-gradient-to-br from-indigo-500 to-violet-600 text-white shadow-lg shadow-indigo-500/30">
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="h-5 w-5" aria-hidden="true">
+            <path d="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z" />
+            <path d="m9 12 2 2 4-4" />
+          </svg>
+        </div>
+        <div class="min-w-0">
+          <h1 class="truncate text-base font-semibold tracking-tight text-slate-900 dark:text-white sm:text-lg">
+            PromptGuard <span class="hidden font-normal text-slate-400 dark:text-slate-500 sm:inline">· AI Privacy Sanitizer</span>
+          </h1>
+          <p class="truncate text-xs text-slate-500 dark:text-slate-400">Scrub sensitive data before it reaches an LLM</p>
+        </div>
+      </div>
+
+      <div class="flex shrink-0 items-center gap-2">
+        <span class="hidden items-center gap-1.5 rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1 text-xs font-medium text-emerald-700 dark:border-emerald-500/20 dark:bg-emerald-500/10 dark:text-emerald-400 md:inline-flex">
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="h-3.5 w-3.5" aria-hidden="true">
+            <rect width="18" height="11" x="3" y="11" rx="2" ry="2" />
+            <path d="M7 11V7a5 5 0 0 1 10 0v4" />
+          </svg>
+          100% local · nothing is uploaded
+        </span>
+        <button id="themeToggle" type="button" aria-label="Toggle dark mode" title="Toggle dark mode"
+          class="grid h-9 w-9 place-items-center rounded-lg border border-slate-200 bg-white text-slate-600 transition hover:bg-slate-100 hover:text-slate-900 focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-300 dark:hover:bg-slate-800 dark:hover:text-white">
+          <!-- Moon (shown in light mode) -->
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="h-[18px] w-[18px] dark:hidden" aria-hidden="true">
+            <path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z" />
+          </svg>
+          <!-- Sun (shown in dark mode) -->
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="hidden h-[18px] w-[18px] dark:block" aria-hidden="true">
+            <circle cx="12" cy="12" r="4" />
+            <path d="M12 2v2" /><path d="M12 20v2" />
+            <path d="m4.93 4.93 1.41 1.41" /><path d="m17.66 17.66 1.41 1.41" />
+            <path d="M2 12h2" /><path d="M20 12h2" />
+            <path d="m6.34 17.66-1.41 1.41" /><path d="m19.07 4.93-1.41 1.41" />
+          </svg>
+        </button>
+      </div>
+    </div>
+  </header>
+
+  <main class="mx-auto max-w-7xl space-y-5 px-4 py-6 sm:px-6 lg:px-8">
+
+    <!-- ==================== Detection rules ==================== -->
+    <section aria-labelledby="rules-title" class="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm dark:border-slate-800 dark:bg-slate-900 sm:p-5">
+      <div class="mb-3 flex flex-wrap items-center justify-between gap-2">
+        <div>
+          <h2 id="rules-title" class="text-sm font-semibold text-slate-900 dark:text-white">Detection Rules</h2>
+          <p class="text-xs text-slate-500 dark:text-slate-400">Choose what gets replaced. The output updates in real time.</p>
+        </div>
+        <div class="flex items-center gap-1 text-xs">
+          <button id="enableAll" type="button" class="rounded-md px-2 py-1 font-medium text-indigo-600 transition hover:bg-indigo-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 dark:text-indigo-400 dark:hover:bg-indigo-500/10">Enable all</button>
+          <button id="disableAll" type="button" class="rounded-md px-2 py-1 font-medium text-slate-500 transition hover:bg-slate-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 dark:text-slate-400 dark:hover:bg-slate-800">Disable all</button>
+        </div>
+      </div>
+
+      <div class="grid grid-cols-1 gap-2 min-[440px]:grid-cols-2 md:grid-cols-3 xl:grid-cols-5">
+        <button type="button" role="switch" aria-checked="true" data-rule="email"
+          class="rule-toggle flex items-center gap-3 rounded-xl border border-slate-200 bg-slate-50/60 px-3 py-2.5 text-left transition focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 dark:border-slate-800 dark:bg-slate-950/40">
+          <span class="switch" aria-hidden="true"><span class="knob"></span></span>
+          <span class="rule-text min-w-0 flex-1">
+            <span class="block text-sm font-medium text-slate-900 dark:text-slate-100">Email</span>
+            <span class="block truncate font-mono text-[11px] text-slate-500 dark:text-slate-400">[EMAIL_REDACTED]</span>
+          </span>
+          <span class="count-badge" data-count-for="email" title="Matches found">0</span>
+        </button>
+
+        <button type="button" role="switch" aria-checked="true" data-rule="phone"
+          class="rule-toggle flex items-center gap-3 rounded-xl border border-slate-200 bg-slate-50/60 px-3 py-2.5 text-left transition focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 dark:border-slate-800 dark:bg-slate-950/40">
+          <span class="switch" aria-hidden="true"><span class="knob"></span></span>
+          <span class="rule-text min-w-0 flex-1">
+            <span class="block text-sm font-medium text-slate-900 dark:text-slate-100">Phone Number</span>
+            <span class="block truncate font-mono text-[11px] text-slate-500 dark:text-slate-400">[PHONE_REDACTED]</span>
+          </span>
+          <span class="count-badge" data-count-for="phone" title="Matches found">0</span>
+        </button>
+
+        <button type="button" role="switch" aria-checked="true" data-rule="ip"
+          class="rule-toggle flex items-center gap-3 rounded-xl border border-slate-200 bg-slate-50/60 px-3 py-2.5 text-left transition focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 dark:border-slate-800 dark:bg-slate-950/40">
+          <span class="switch" aria-hidden="true"><span class="knob"></span></span>
+          <span class="rule-text min-w-0 flex-1">
+            <span class="block text-sm font-medium text-slate-900 dark:text-slate-100">IP Address <span class="text-xs font-normal text-slate-400">v4 / v6</span></span>
+            <span class="block truncate font-mono text-[11px] text-slate-500 dark:text-slate-400">[IP_REDACTED]</span>
+          </span>
+          <span class="count-badge" data-count-for="ip" title="Matches found">0</span>
+        </button>
+
+        <button type="button" role="switch" aria-checked="true" data-rule="apikey"
+          class="rule-toggle flex items-center gap-3 rounded-xl border border-slate-200 bg-slate-50/60 px-3 py-2.5 text-left transition focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 dark:border-slate-800 dark:bg-slate-950/40"
+          title="OpenAI / Anthropic (sk-…), AWS, Google, GitHub, GitLab, Slack, Stripe, Hugging Face, Groq, xAI, JWTs, Bearer tokens and KEY=value secrets">
+          <span class="switch" aria-hidden="true"><span class="knob"></span></span>
+          <span class="rule-text min-w-0 flex-1">
+            <span class="block text-sm font-medium text-slate-900 dark:text-slate-100">API Key / Token</span>
+            <span class="block truncate font-mono text-[11px] text-slate-500 dark:text-slate-400">[API_KEY_REDACTED]</span>
+          </span>
+          <span class="count-badge" data-count-for="apikey" title="Matches found">0</span>
+        </button>
+
+        <button type="button" role="switch" aria-checked="true" data-rule="keyword"
+          class="rule-toggle flex items-center gap-3 rounded-xl border border-slate-200 bg-slate-50/60 px-3 py-2.5 text-left transition focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 dark:border-slate-800 dark:bg-slate-950/40">
+          <span class="switch" aria-hidden="true"><span class="knob"></span></span>
+          <span class="rule-text min-w-0 flex-1">
+            <span class="block text-sm font-medium text-slate-900 dark:text-slate-100">Custom Keywords</span>
+            <span class="block truncate font-mono text-[11px] text-slate-500 dark:text-slate-400">[KEYWORD_REDACTED]</span>
+          </span>
+          <span class="count-badge" data-count-for="keyword" title="Matches found">0</span>
+        </button>
+      </div>
+
+      <!-- Custom keywords -->
+      <div id="keywordPanel" class="mt-4 rounded-xl border border-dashed border-slate-300 p-3 transition-opacity dark:border-slate-700">
+        <div class="flex flex-wrap items-center justify-between gap-x-4 gap-y-2">
+          <label for="keywordInput" class="text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">
+            Custom keywords
+            <span class="ml-1 font-mono font-medium normal-case tracking-normal text-violet-600 dark:text-violet-400">→ [KEYWORD_REDACTED]</span>
+          </label>
+          <div class="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-slate-600 dark:text-slate-400">
+            <label class="inline-flex cursor-pointer items-center gap-1.5">
+              <input id="kwCase" type="checkbox" class="h-3.5 w-3.5 rounded accent-violet-600" />
+              Case sensitive
+            </label>
+            <label class="inline-flex cursor-pointer items-center gap-1.5" title="Only match complete words. Not recommended for Chinese / Japanese text.">
+              <input id="kwWhole" type="checkbox" class="h-3.5 w-3.5 rounded accent-violet-600" />
+              Whole words only
+            </label>
+            <button id="clearKeywords" type="button" class="font-medium text-slate-500 transition hover:text-rose-600 focus:outline-none focus-visible:underline dark:text-slate-400 dark:hover:text-rose-400">Clear all</button>
+          </div>
+        </div>
+        <div class="mt-2 flex gap-2">
+          <input id="keywordInput" type="text" autocomplete="off" spellcheck="false"
+            placeholder="Names, projects, secret words… press Enter to add (commas work too)"
+            class="min-w-0 flex-1 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 placeholder:text-slate-400 transition focus:border-violet-500 focus:outline-none focus:ring-2 focus:ring-violet-500/30 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-100 dark:placeholder:text-slate-500" />
+          <button id="addKeyword" type="button"
+            class="shrink-0 rounded-lg bg-violet-600 px-4 py-2 text-sm font-medium text-white shadow-sm transition hover:bg-violet-500 focus:outline-none focus-visible:ring-2 focus-visible:ring-violet-500 focus-visible:ring-offset-2 dark:focus-visible:ring-offset-slate-900">Add</button>
+        </div>
+        <div id="keywordChips" class="mt-2 flex flex-wrap gap-1.5" aria-live="polite"></div>
+      </div>
+    </section>
+
+    <!-- ==================== Editors ==================== -->
+    <section class="grid gap-4 lg:grid-cols-2">
+      <!-- Input -->
+      <div class="flex flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm dark:border-slate-800 dark:bg-slate-900">
+        <div class="flex flex-wrap items-center justify-between gap-2 border-b border-slate-200 px-4 py-3 dark:border-slate-800">
+          <div class="flex items-center gap-2">
+            <span class="dot" style="--rule:#94a3b8"></span>
+            <label for="input" class="text-sm font-semibold text-slate-900 dark:text-white">Input Text</label>
+          </div>
+          <div class="flex items-center gap-2">
+            <button id="loadSample" type="button"
+              class="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-medium text-slate-700 transition hover:bg-slate-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200 dark:hover:bg-slate-700">
+              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="h-3.5 w-3.5" aria-hidden="true">
+                <path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z" />
+                <path d="M14 2v4a2 2 0 0 0 2 2h4" /><path d="M10 9H8" /><path d="M16 13H8" /><path d="M16 17H8" />
+              </svg>
+              Load Sample Text
+            </button>
+            <button id="clearInput" type="button"
+              class="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-medium text-slate-700 transition hover:border-rose-200 hover:bg-rose-50 hover:text-rose-600 focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200 dark:hover:border-rose-500/30 dark:hover:bg-rose-500/10 dark:hover:text-rose-400">
+              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="h-3.5 w-3.5" aria-hidden="true">
+                <path d="M3 6h18" /><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6" /><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2" />
+              </svg>
+              Clear
+            </button>
+          </div>
+        </div>
+        <textarea id="input" spellcheck="false" autocomplete="off"
+          placeholder="Paste text that contains emails, phone numbers, IP addresses, API keys… or drop a .txt file here."
+          class="scroll-thin h-80 w-full flex-1 resize-none bg-transparent p-4 font-mono text-[13px] leading-relaxed text-slate-800 placeholder:font-sans placeholder:text-slate-400 focus:outline-none dark:text-slate-200 dark:placeholder:text-slate-500 sm:h-[460px]"></textarea>
+      </div>
+
+      <!-- Output -->
+      <div class="flex flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm dark:border-slate-800 dark:bg-slate-900">
+        <div class="flex flex-wrap items-center justify-between gap-2 border-b border-slate-200 px-4 py-3 dark:border-slate-800">
+          <div class="flex items-center gap-2">
+            <span class="dot" style="--rule:#10b981"></span>
+            <h2 class="text-sm font-semibold text-slate-900 dark:text-white">Sanitized Output</h2>
+            <span id="outputBadge" class="hidden rounded-full bg-emerald-50 px-2 py-0.5 text-[11px] font-semibold text-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-400"></span>
+          </div>
+          <button id="copyBtn" type="button" disabled
+            class="inline-flex items-center gap-1.5 rounded-lg bg-indigo-600 px-3 py-1.5 text-xs font-semibold text-white shadow-sm transition hover:bg-indigo-500 focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:bg-indigo-600 dark:focus-visible:ring-offset-slate-900">
+            <svg id="copyIcon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="h-3.5 w-3.5" aria-hidden="true">
+              <rect width="14" height="14" x="8" y="8" rx="2" ry="2" />
+              <path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2" />
+            </svg>
+            <svg id="checkIcon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" class="hidden h-3.5 w-3.5" aria-hidden="true">
+              <path d="M20 6 9 17l-5-5" />
+            </svg>
+            <span id="copyLabel">Copy to Clipboard</span>
+          </button>
+        </div>
+        <div id="output" role="region" aria-label="Sanitized output" aria-live="polite" tabindex="0"
+          class="scroll-thin h-80 flex-1 overflow-auto whitespace-pre-wrap break-words p-4 font-mono text-[13px] leading-relaxed text-slate-800 focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-indigo-500 dark:text-slate-200 sm:h-[460px]"></div>
+      </div>
+    </section>
+
+    <!-- ==================== Live statistics ==================== -->
+    <section aria-label="Statistics" class="grid grid-cols-2 gap-3 lg:grid-cols-4">
+      <div class="col-span-2 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm dark:border-slate-800 dark:bg-slate-900 lg:col-span-1">
+        <div class="flex items-center justify-between text-slate-500 dark:text-slate-400">
+          <span class="text-xs font-medium uppercase tracking-wide">Items Redacted</span>
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="h-4 w-4" aria-hidden="true">
+            <path d="M10.733 5.076a10.744 10.744 0 0 1 11.205 6.575 1 1 0 0 1 0 .696 10.747 10.747 0 0 1-1.444 2.49" />
+            <path d="M14.084 14.158a3 3 0 0 1-4.242-4.242" />
+            <path d="M17.479 17.499a10.75 10.75 0 0 1-15.417-5.151 1 1 0 0 1 0-.696 10.75 10.75 0 0 1 4.446-5.143" />
+            <path d="m2 2 20 20" />
+          </svg>
+        </div>
+        <div id="statRedacted" class="mt-1 text-3xl font-bold tabular-nums text-emerald-600 dark:text-emerald-400">0</div>
+        <div id="statBreakdown" class="mt-2 flex min-h-[1.5rem] flex-wrap gap-1.5 text-[11px]"></div>
+      </div>
+
+      <div class="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm dark:border-slate-800 dark:bg-slate-900">
+        <div class="flex items-center justify-between text-slate-500 dark:text-slate-400">
+          <span class="text-xs font-medium uppercase tracking-wide">Characters</span>
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="h-4 w-4" aria-hidden="true">
+            <polyline points="4 7 4 4 20 4 20 7" /><line x1="9" x2="15" y1="20" y2="20" /><line x1="12" x2="12" y1="4" y2="20" />
+          </svg>
+        </div>
+        <div id="statChars" class="mt-1 text-3xl font-bold tabular-nums text-slate-900 dark:text-white">0</div>
+        <div class="mt-2 text-xs text-slate-500 dark:text-slate-400">Input: <span id="statCharsIn" class="tabular-nums">0</span></div>
+      </div>
+
+      <div class="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm dark:border-slate-800 dark:bg-slate-900">
+        <div class="flex items-center justify-between text-slate-500 dark:text-slate-400">
+          <span class="text-xs font-medium uppercase tracking-wide">Words</span>
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="h-4 w-4" aria-hidden="true">
+            <path d="M17 6.1H3" /><path d="M21 12.1H3" /><path d="M15.1 18H3" />
+          </svg>
+        </div>
+        <div id="statWords" class="mt-1 text-3xl font-bold tabular-nums text-slate-900 dark:text-white">0</div>
+        <div class="mt-2 text-xs text-slate-500 dark:text-slate-400">Input: <span id="statWordsIn" class="tabular-nums">0</span></div>
+      </div>
+
+      <div class="col-span-2 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm dark:border-slate-800 dark:bg-slate-900 lg:col-span-1"
+        title="Heuristic: about 4 characters per token for English text and about 1 token per Chinese / Japanese / Korean character. Real counts vary by model.">
+        <div class="flex items-center justify-between text-slate-500 dark:text-slate-400">
+          <span class="text-xs font-medium uppercase tracking-wide">Est. Tokens</span>
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="h-4 w-4" aria-hidden="true">
+            <circle cx="8" cy="8" r="6" /><path d="M18.09 10.37A6 6 0 1 1 10.34 18" /><path d="M7 6h1v4" /><path d="m16.71 13.88.7.71-2.82 2.82" />
+          </svg>
+        </div>
+        <div class="mt-1 text-3xl font-bold tabular-nums text-indigo-600 dark:text-indigo-400">≈<span id="statTokens">0</span></div>
+        <div class="mt-2 text-xs text-slate-500 dark:text-slate-400">Input: ≈<span id="statTokensIn" class="tabular-nums">0</span></div>
+      </div>
+    </section>
+
+    <p class="text-center text-xs leading-relaxed text-slate-500 dark:text-slate-400">
+      Detection is pattern-based and cannot catch everything (for example, names that are not in your keyword list).
+      Always review the output before sharing it.
+    </p>
+  </main>
+
+  <footer class="mx-auto max-w-7xl px-4 pb-8 text-center text-xs text-slate-400 dark:text-slate-500 sm:px-6 lg:px-8">
+    PromptGuard is free and open source under the MIT License. All processing happens locally in your browser —
+    your text is never uploaded, stored, or logged.
+  </footer>
+
+  <div id="toast" class="toast rounded-full bg-slate-900 px-4 py-2 text-sm font-medium text-white shadow-lg dark:bg-white dark:text-slate-900" role="status" aria-live="polite"></div>
+
+  <!-- ==================== Sanitizer engine (pure logic, no DOM) ==================== -->
+  <script>
+    const PromptGuard = (() => {
+      'use strict';
+
+      /** Label and replacement tag for each rule. */
+      const RULES = {
+        email:   { label: 'Email',   tag: '[EMAIL_REDACTED]' },
+        phone:   { label: 'Phone',   tag: '[PHONE_REDACTED]' },
+        ip:      { label: 'IP',      tag: '[IP_REDACTED]' },
+        apikey:  { label: 'API Key', tag: '[API_KEY_REDACTED]' },
+        keyword: { label: 'Keyword', tag: '[KEYWORD_REDACTED]' },
+      };
+
+      /** Detection order. When two matches overlap, the rule listed first wins. */
+      const PRIORITY = ['apikey', 'email', 'ip', 'phone', 'keyword'];
+
+      /* ---------- API keys & tokens ---------- */
+      const API_KEY_PATTERNS = [
+        // OpenAI, Anthropic, OpenRouter, DeepSeek and other "sk-..." keys
+        { re: /(?<![\w-])sk-(?:proj-|ant-(?:api|admin)\d{2}-|or-v1-|svcacct-|admin-)?[A-Za-z0-9_-]{20,}/g, check: (m) => /\d/.test(m) },
+        // Stripe
+        { re: /(?<![\w-])(?:sk|pk|rk)_(?:live|test)_[A-Za-z0-9]{16,}/g },
+        // AWS access key IDs
+        { re: /(?<![A-Za-z0-9])(?:AKIA|ASIA|ABIA|ACCA)[A-Z0-9]{16}(?![A-Za-z0-9])/g },
+        // Google API keys
+        { re: /(?<![\w-])AIza[0-9A-Za-z_-]{35}(?![\w-])/g },
+        // GitHub (classic + fine-grained)
+        { re: /(?<![\w-])gh[pousr]_[A-Za-z0-9]{30,}/g },
+        { re: /(?<![\w-])github_pat_[A-Za-z0-9_]{30,}/g },
+        // GitLab
+        { re: /(?<![\w-])glpat-[A-Za-z0-9_-]{20,}/g },
+        // Slack
+        { re: /(?<![\w-])xox[abposr]-[A-Za-z0-9-]{10,}/g },
+        // Hugging Face
+        { re: /(?<![\w-])hf_[A-Za-z0-9]{30,}/g },
+        // Groq
+        { re: /(?<![\w-])gsk_[A-Za-z0-9]{40,}/g },
+        // xAI
+        { re: /(?<![\w-])xai-[A-Za-z0-9]{40,}/g },
+        // JSON Web Tokens
+        { re: /(?<![\w-])eyJ[A-Za-z0-9_-]{8,}\.eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}/g },
+        // "Authorization: Bearer <token>"
+        { re: /(?<=\bBearer\s+)[A-Za-z0-9._~+\/-]{16,}=*/gi },
+        // KEY=value style secrets: SECRET_KEY="...", "access_token": "...", api-key: ...
+        {
+          re: /(?<=(?:api[_-]?key|secret|token|access[_-]?key|private[_-]?key)[\w-]*["']?\s*[:=]\s*["']?)[A-Za-z0-9._~+\/=-]{16,}/gi,
+          check: (m) => /[A-Za-z]/.test(m) && /\d/.test(m),
+        },
+      ];
+
+      /* ---------- Email ---------- */
+      const EMAIL_RE = /(?<![A-Za-z0-9._%+-])[A-Za-z0-9._%+-]+@(?:[A-Za-z0-9-]+\.)+[A-Za-z]{2,}/g;
+
+      /* ---------- IP addresses ---------- */
+      const OCTET = '(?:25[0-5]|2[0-4]\\d|1\\d\\d|[1-9]?\\d)';
+      const IPV4_RE = new RegExp(`(?<![\\w.])${OCTET}(?:\\.${OCTET}){3}(?!\\w|\\.\\d)`, 'g');
+
+      const H = '[0-9A-Fa-f]{1,4}';
+      const IPV6_RE = new RegExp(
+        '(?<![\\w:])(?:' + [
+          `(?:${H}:){7}${H}`,
+          `(?:${H}:){1,7}:`,
+          `(?:${H}:){1,6}:${H}`,
+          `(?:${H}:){1,5}(?::${H}){1,2}`,
+          `(?:${H}:){1,4}(?::${H}){1,3}`,
+          `(?:${H}:){1,3}(?::${H}){1,4}`,
+          `(?:${H}:){1,2}(?::${H}){1,5}`,
+          `${H}:(?::${H}){1,6}`,
+          `:(?::${H}){1,7}`,
+        ].join('|') + ')(?![\\w:]|\\.\\d)',
+        'g'
+      );
+
+      // Rejects look-alikes such as C++ "Add::" or Python slices "a[1::2]".
+      function isLikelyIPv6(m) {
+        if (/^::[0-9a-f]{1,4}$/i.test(m)) return true; // ::1
+        const groups = m.split(':').filter(Boolean);
+        return groups.length >= 2 && groups.some((g) => g.length >= 3);
+      }
+
+      /* ---------- Phone numbers ---------- */
+      // Broad candidate pattern; isLikelyPhone() filters out dates, versions, amounts, etc.
+      const PHONE_RE = /(?<![\w+.-])(?:\+\d{1,3}[ .-]?)?(?:\(\d{2,4}\)[ .-]?)?\d{1,4}(?:[ .-]?\d{1,4}){1,5}(?![\w:-]|\.\d)/g;
+
+      function isLikelyPhone(m) {
+        const digits = m.replace(/\D/g, '');
+        if (digits.length < 7 || digits.length > 15) return false;
+        // Dates such as 2026-10-21 or 21.10.2026, and dotted IPv4 addresses
+        if (/^\d{4}[-. ]\d{1,2}[-. ]\d{1,2}$/.test(m) || /^\d{1,2}[-. ]\d{1,2}[-. ]\d{4}$/.test(m)) return false;
+        if (/^\d{1,3}(?:\.\d{1,3}){3}$/.test(m)) return false;
+        // An international prefix or an area code in parentheses is a strong signal
+        if (m.startsWith('+') || m.includes('(')) return true;
+
+        const groups = m.split(/[ .-]/);
+        // Unseparated digits: only accept common mobile / landline shapes
+        if (groups.length === 1) return /^(?:0\d{9,10}|1[3-9]\d{9}|[2-9]\d{9})$/.test(digits);
+        // Every group needs 2+ digits, except a leading "1" (e.g. 1-800-555-0199)
+        if (groups.some((g, i) => g.length < 2 && !(i === 0 && g === '1'))) return false;
+
+        const separators = m.replace(/\d/g, '');
+        if (/^\.+$/.test(separators)) return groups.length >= 3; // 555.123.4567 (not 3.14159)
+        if (/^ +$/.test(separators)) {
+          // Space-separated: avoid tables of numbers like "1200 1350 1500"
+          return digits.length >= 10 && digits.length <= 11 && groups[groups.length - 1].length >= 3;
+        }
+        return groups.length >= 3 || digits.length >= 9; // "5000-8000" is a range, not a phone
+      }
+
+      /* ---------- Custom keywords ---------- */
+      const escapeRegExp = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+      function buildKeywordRegex(keywords, { caseSensitive = false, wholeWord = false } = {}) {
+        const list = [...new Set((keywords || []).map((k) => k.trim()).filter(Boolean))]
+          .sort((a, b) => b.length - a.length) // prefer the longest keyword
+          .map(escapeRegExp);
+        if (!list.length) return null;
+        let source = `(?:${list.join('|')})`;
+        if (wholeWord) source = `(?<![\\p{L}\\p{N}_])${source}(?![\\p{L}\\p{N}_])`;
+        return new RegExp(source, caseSensitive ? 'gu' : 'giu');
+      }
+
+      /* ---------- Matching ---------- */
+      function collect(re, text, check, out) {
+        for (const m of text.matchAll(re)) {
+          const value = m[0];
+          if (!value || (check && !check(value))) continue;
+          out.push({ start: m.index, end: m.index + value.length });
+        }
+        return out;
+      }
+
+      const DETECTORS = {
+        apikey: (text) => {
+          const out = [];
+          for (const p of API_KEY_PATTERNS) collect(p.re, text, p.check, out);
+          return out;
+        },
+        email: (text) => collect(EMAIL_RE, text, null, []),
+        ip: (text) => collect(IPV6_RE, text, isLikelyIPv6, collect(IPV4_RE, text, null, [])),
+        phone: (text) => collect(PHONE_RE, text, isLikelyPhone, []),
+        keyword: (text, options) => {
+          const re = buildKeywordRegex(options.keywords, options);
+          return re ? collect(re, text, null, []) : [];
+        },
+      };
+
+      /**
+       * Sanitize text.
+       * @param {string} text
+       * @param {{rules: Object<string, boolean>, keywords?: string[], caseSensitive?: boolean, wholeWord?: boolean}} options
+       * @returns {{output: string, segments: {text: string, type?: string}[], counts: Object<string, number>, total: number}}
+       */
+      function sanitize(text, options) {
+        const rules = options.rules || {};
+        const taken = new Uint8Array(text.length); // characters already claimed by a match
+        const spans = [];
+
+        for (const type of PRIORITY) {
+          if (!rules[type] || !text) continue;
+          for (const span of DETECTORS[type](text, options)) {
+            let free = true;
+            for (let i = span.start; i < span.end; i++) {
+              if (taken[i]) { free = false; break; }
+            }
+            if (!free) continue;
+            taken.fill(1, span.start, span.end);
+            spans.push({ ...span, type });
+          }
+        }
+        spans.sort((a, b) => a.start - b.start);
+
+        const segments = [];
+        const counts = {};
+        let cursor = 0;
+        for (const s of spans) {
+          if (s.start > cursor) segments.push({ text: text.slice(cursor, s.start) });
+          segments.push({ text: RULES[s.type].tag, type: s.type });
+          counts[s.type] = (counts[s.type] || 0) + 1;
+          cursor = s.end;
+        }
+        if (cursor < text.length) segments.push({ text: text.slice(cursor) });
+
+        return {
+          output: segments.map((s) => s.text).join(''),
+          segments,
+          counts,
+          total: spans.length,
+        };
+      }
+
+      /* ---------- Statistics ---------- */
+      // Han, Hiragana, Katakana: written without spaces, so each character counts as a word.
+      const CJK_WORD_RE = /[぀-ヿ㐀-䶿一-鿿豈-﫿]/g;
+      // For token estimates, Hangul and full-width forms behave the same way.
+      const CJK_TOKEN_RE = /[⺀-⿿　-ヿ㐀-䶿一-鿿가-힯豈-﫿＀-￯]/g;
+
+      /** Unicode code points (emoji count as one). */
+      function countChars(text) {
+        const surrogatePairs = text.match(/[\uD800-\uDBFF][\uDC00-\uDFFF]/g);
+        return text.length - (surrogatePairs ? surrogatePairs.length : 0);
+      }
+
+      function countWords(text) {
+        if (!text) return 0;
+        const cjk = (text.match(CJK_WORD_RE) || []).length;
+        const rest = text.replace(CJK_WORD_RE, ' ').split(/\s+/).filter((w) => /[\p{L}\p{N}]/u.test(w)).length;
+        return cjk + rest;
+      }
+
+      /** Rough estimate: ~4 characters per token for Latin text, ~1 token per CJK character. */
+      function estimateTokens(text) {
+        if (!text) return 0;
+        const cjk = (text.match(CJK_TOKEN_RE) || []).length;
+        return Math.ceil(cjk + (countChars(text) - cjk) / 4);
+      }
+
+      return { RULES, sanitize, countChars, countWords, estimateTokens };
+    })();
+  </script>
+
+  <!-- ==================== UI ==================== -->
+  <script>
+    (() => {
+      'use strict';
+
+      const { RULES, sanitize, countChars, countWords, estimateTokens } = PromptGuard;
+      const $ = (id) => document.getElementById(id);
+
+      const els = {
+        input: $('input'),
+        output: $('output'),
+        outputBadge: $('outputBadge'),
+        copyBtn: $('copyBtn'),
+        copyLabel: $('copyLabel'),
+        copyIcon: $('copyIcon'),
+        checkIcon: $('checkIcon'),
+        loadSample: $('loadSample'),
+        clearInput: $('clearInput'),
+        themeToggle: $('themeToggle'),
+        enableAll: $('enableAll'),
+        disableAll: $('disableAll'),
+        keywordPanel: $('keywordPanel'),
+        keywordInput: $('keywordInput'),
+        addKeyword: $('addKeyword'),
+        keywordChips: $('keywordChips'),
+        clearKeywords: $('clearKeywords'),
+        kwCase: $('kwCase'),
+        kwWhole: $('kwWhole'),
+        statRedacted: $('statRedacted'),
+        statBreakdown: $('statBreakdown'),
+        statChars: $('statChars'),
+        statCharsIn: $('statCharsIn'),
+        statWords: $('statWords'),
+        statWordsIn: $('statWordsIn'),
+        statTokens: $('statTokens'),
+        statTokensIn: $('statTokensIn'),
+        toast: $('toast'),
+      };
+      const toggles = Array.from(document.querySelectorAll('.rule-toggle'));
+      const DISPLAY_ORDER = ['email', 'phone', 'ip', 'apikey', 'keyword'];
+
+      const SETTINGS_KEY = 'promptguard-settings';
+      const THEME_KEY = 'promptguard-theme';
+
+      // Rule switches and keyword options are remembered in this browser.
+      // Your text and keyword list are never stored.
+      const state = {
+        rules: { email: true, phone: true, ip: true, apikey: true, keyword: true },
+        keywords: [],
+        caseSensitive: false,
+        wholeWord: false,
+      };
+      let lastOutput = '';
+
+      const SAMPLE_KEYWORDS = ['Jane Doe', 'Acme Corp', 'Project Phoenix'];
+      const SAMPLE_TEXT = `Hi team,
+
+Before I paste this incident report into ChatGPT for a summary, please double-check it.
+
+Reporter: Jane Doe <jane.doe@example.com>
+Backup contact: j.smith+alerts@acme-corp.io
+Phone (US): +1 (555) 123-4567 · Office: 555.987.6543
+Taiwan mobile: 0912-345-678 · London: +44 20 7946 0958
+
+Affected hosts: 192.168.1.42, 10.0.0.7 and the public gateway 203.0.113.25
+IPv6 upstream: 2001:db8:85a3::8a2e:370:7334
+
+Credentials found in the repo (rotate them!):
+OPENAI_API_KEY=sk-proj-4fQ9xT2LmZ8vR1bN6kW3yH7pD0sJ5cGa
+ANTHROPIC_API_KEY=sk-ant-api03-Zr8Kp2Wm5Qx9Lt4Nv7Bc1Hd6Fj3Sg0Ya-EXAMPLE
+AWS_ACCESS_KEY_ID=AKIAIOSFODNN7EXAMPLE
+curl -H "Authorization: Bearer hf_aB3dE5gH7jK9mN1pQ3sT5vX7zA9cE1gI3kM5" https://api.example.com/v1/data
+
+This belongs to Project Phoenix at Acme Corp — keep it confidential.
+Deployed on 2026-10-21 at 14:30, ticket #48213, budget $12,500, version 3.14.2.`;
+
+      const numberFormat = new Intl.NumberFormat('en-US');
+      const fmt = (n) => numberFormat.format(n);
+      const escapeHtml = (s) => s.replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+
+      /* ---------- Persistence (best effort) ---------- */
+      function loadSettings() {
+        try {
+          const saved = JSON.parse(localStorage.getItem(SETTINGS_KEY) || 'null');
+          if (!saved) return;
+          if (saved.rules) {
+            for (const key of Object.keys(state.rules)) {
+              if (typeof saved.rules[key] === 'boolean') state.rules[key] = saved.rules[key];
+            }
+          }
+          state.caseSensitive = !!saved.caseSensitive;
+          state.wholeWord = !!saved.wholeWord;
+        } catch (e) { /* storage unavailable or corrupt: use defaults */ }
+      }
+
+      function saveSettings() {
+        try {
+          localStorage.setItem(SETTINGS_KEY, JSON.stringify({
+            rules: state.rules,
+            caseSensitive: state.caseSensitive,
+            wholeWord: state.wholeWord,
+          }));
+        } catch (e) { /* ignore */ }
+      }
+
+      /* ---------- Rendering ---------- */
+      function render() {
+        const text = els.input.value;
+        const result = sanitize(text, state);
+        lastOutput = result.output;
+
+        if (!text) {
+          els.output.innerHTML = '<span class="output-placeholder">Sanitized text will appear here as you type or paste…</span>';
+        } else {
+          els.output.innerHTML = result.segments.map((seg) => seg.type
+            ? `<mark class="tag tag-${seg.type}" title="${RULES[seg.type].label} redacted">${escapeHtml(seg.text)}</mark>`
+            : escapeHtml(seg.text)
+          ).join('');
+        }
+
+        // Per-rule counters on the switches
+        document.querySelectorAll('[data-count-for]').forEach((badge) => {
+          badge.textContent = fmt(result.counts[badge.dataset.countFor] || 0);
+        });
+
+        // Output header badge
+        els.outputBadge.classList.toggle('hidden', result.total === 0);
+        els.outputBadge.textContent = `${fmt(result.total)} redacted`;
+        els.copyBtn.disabled = !lastOutput;
+
+        // Statistics
+        els.statRedacted.textContent = fmt(result.total);
+        const breakdown = DISPLAY_ORDER.filter((type) => result.counts[type]);
+        els.statBreakdown.innerHTML = breakdown.length
+          ? breakdown.map((type) => `<span class="mini-chip"><span class="dot dot-${type}"></span>${fmt(result.counts[type])} ${RULES[type].label}</span>`).join('')
+          : '<span class="text-slate-400 dark:text-slate-500">No sensitive items found yet</span>';
+
+        els.statChars.textContent = fmt(countChars(lastOutput));
+        els.statCharsIn.textContent = fmt(countChars(text));
+        els.statWords.textContent = fmt(countWords(lastOutput));
+        els.statWordsIn.textContent = fmt(countWords(text));
+        els.statTokens.textContent = fmt(estimateTokens(lastOutput));
+        els.statTokensIn.textContent = fmt(estimateTokens(text));
+      }
+
+      let renderQueued = false;
+      function scheduleRender() {
+        if (renderQueued) return;
+        renderQueued = true;
+        requestAnimationFrame(() => { renderQueued = false; render(); });
+      }
+
+      function syncControls() {
+        toggles.forEach((btn) => btn.setAttribute('aria-checked', String(!!state.rules[btn.dataset.rule])));
+        els.keywordPanel.classList.toggle('is-disabled', !state.rules.keyword);
+        els.kwCase.checked = state.caseSensitive;
+        els.kwWhole.checked = state.wholeWord;
+      }
+
+      function renderChips() {
+        if (!state.keywords.length) {
+          els.keywordChips.innerHTML = '<span class="text-xs text-slate-400 dark:text-slate-500">No custom keywords yet.</span>';
+          return;
+        }
+        els.keywordChips.innerHTML = state.keywords.map((kw, i) => `
+          <span class="kw-chip" title="${escapeHtml(kw)}">
+            <span class="kw-text">${escapeHtml(kw)}</span>
+            <button type="button" data-remove="${i}" aria-label="Remove keyword ${escapeHtml(kw)}">
+              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" width="12" height="12" aria-hidden="true"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>
+            </button>
+          </span>`).join('');
+      }
+
+      /* ---------- Toast ---------- */
+      let toastTimer = null;
+      function showToast(message) {
+        els.toast.textContent = message;
+        els.toast.classList.add('show');
+        clearTimeout(toastTimer);
+        toastTimer = setTimeout(() => els.toast.classList.remove('show'), 2200);
+      }
+
+      /* ---------- Keywords ---------- */
+      function addKeywords(raw) {
+        const parts = raw.split(/[,\n\r]+/).map((s) => s.trim()).filter(Boolean);
+        let added = 0;
+        for (const part of parts) {
+          if (!state.keywords.includes(part)) {
+            state.keywords.push(part);
+            added++;
+          }
+        }
+        if (added) {
+          renderChips();
+          render();
+        }
+        return added;
+      }
+
+      function commitKeywordInput() {
+        const value = els.keywordInput.value;
+        if (!value.trim()) return;
+        addKeywords(value);
+        els.keywordInput.value = '';
+        if (!state.rules.keyword) {
+          state.rules.keyword = true;
+          syncControls();
+          saveSettings();
+          render();
+        }
+      }
+
+      els.addKeyword.addEventListener('click', () => {
+        commitKeywordInput();
+        els.keywordInput.focus();
+      });
+
+      els.keywordInput.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter' || e.key === ',') {
+          e.preventDefault();
+          commitKeywordInput();
+        } else if (e.key === 'Backspace' && !els.keywordInput.value && state.keywords.length) {
+          state.keywords.pop();
+          renderChips();
+          render();
+        }
+      });
+
+      els.keywordInput.addEventListener('paste', (e) => {
+        const pasted = (e.clipboardData || window.clipboardData).getData('text');
+        if (/[,\n\r]/.test(pasted)) {
+          e.preventDefault();
+          addKeywords(els.keywordInput.value + ',' + pasted);
+          els.keywordInput.value = '';
+        }
+      });
+
+      els.keywordChips.addEventListener('click', (e) => {
+        const btn = e.target.closest('[data-remove]');
+        if (!btn) return;
+        state.keywords.splice(Number(btn.dataset.remove), 1);
+        renderChips();
+        render();
+        els.keywordInput.focus();
+      });
+
+      els.clearKeywords.addEventListener('click', () => {
+        if (!state.keywords.length) return;
+        state.keywords = [];
+        renderChips();
+        render();
+        showToast('Custom keywords cleared');
+      });
+
+      els.kwCase.addEventListener('change', () => { state.caseSensitive = els.kwCase.checked; saveSettings(); render(); });
+      els.kwWhole.addEventListener('change', () => { state.wholeWord = els.kwWhole.checked; saveSettings(); render(); });
+
+      /* ---------- Rule switches ---------- */
+      toggles.forEach((btn) => btn.addEventListener('click', () => {
+        const rule = btn.dataset.rule;
+        state.rules[rule] = !state.rules[rule];
+        syncControls();
+        saveSettings();
+        render();
+      }));
+
+      function setAllRules(on) {
+        for (const key of Object.keys(state.rules)) state.rules[key] = on;
+        syncControls();
+        saveSettings();
+        render();
+      }
+      els.enableAll.addEventListener('click', () => setAllRules(true));
+      els.disableAll.addEventListener('click', () => setAllRules(false));
+
+      /* ---------- Input ---------- */
+      els.input.addEventListener('input', scheduleRender);
+
+      els.loadSample.addEventListener('click', () => {
+        els.input.value = SAMPLE_TEXT;
+        const added = addKeywords(SAMPLE_KEYWORDS.join(','));
+        if (!state.rules.keyword && added) state.rules.keyword = true;
+        syncControls();
+        render();
+        els.input.scrollTop = 0;
+        showToast(added ? 'Sample loaded with example keywords' : 'Sample text loaded');
+      });
+
+      els.clearInput.addEventListener('click', () => {
+        els.input.value = '';
+        render();
+        els.input.focus();
+      });
+
+      // Drop a text file onto the input box (and never let a dropped file navigate away)
+      ['dragover', 'drop'].forEach((type) => window.addEventListener(type, (e) => e.preventDefault()));
+      els.input.addEventListener('dragenter', () => els.input.classList.add('drag-over'));
+      els.input.addEventListener('dragleave', () => els.input.classList.remove('drag-over'));
+      els.input.addEventListener('drop', (e) => {
+        els.input.classList.remove('drag-over');
+        const file = e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files[0];
+        if (file) {
+          if (file.size > 5 * 1024 * 1024) { showToast('File is too large (max 5 MB)'); return; }
+          file.text().then((content) => {
+            els.input.value = content;
+            render();
+            showToast(`Loaded ${file.name}`);
+          }).catch(() => showToast('Could not read that file'));
+          return;
+        }
+        const dropped = e.dataTransfer && e.dataTransfer.getData('text');
+        if (dropped) {
+          els.input.setRangeText(dropped, els.input.selectionStart, els.input.selectionEnd, 'end');
+          render();
+        }
+      });
+
+      /* ---------- Copy to clipboard ---------- */
+      function legacyCopy(text) {
+        const ta = document.createElement('textarea');
+        ta.value = text;
+        ta.setAttribute('readonly', '');
+        ta.style.position = 'fixed';
+        ta.style.top = '0';
+        ta.style.left = '-9999px';
+        document.body.appendChild(ta);
+        ta.select();
+        let ok = false;
+        try { ok = document.execCommand('copy'); } catch (e) { ok = false; }
+        document.body.removeChild(ta);
+        return ok;
+      }
+
+      let copyResetTimer = null;
+      els.copyBtn.addEventListener('click', async () => {
+        if (!lastOutput) return;
+        let ok = false;
+        try {
+          if (navigator.clipboard && window.isSecureContext) {
+            await navigator.clipboard.writeText(lastOutput);
+            ok = true;
+          }
+        } catch (e) { ok = false; }
+        if (!ok) ok = legacyCopy(lastOutput);
+
+        if (!ok) {
+          showToast('Copy failed: select the output and press Ctrl+C');
+          return;
+        }
+        els.copyLabel.textContent = 'Copied!';
+        els.copyIcon.classList.add('hidden');
+        els.checkIcon.classList.remove('hidden');
+        clearTimeout(copyResetTimer);
+        copyResetTimer = setTimeout(() => {
+          els.copyLabel.textContent = 'Copy to Clipboard';
+          els.copyIcon.classList.remove('hidden');
+          els.checkIcon.classList.add('hidden');
+        }, 1600);
+        showToast(`Copied ${fmt(countChars(lastOutput))} characters to clipboard`);
+      });
+
+      /* ---------- Theme ---------- */
+      function applyTheme(dark) {
+        document.documentElement.classList.toggle('dark', dark);
+        els.themeToggle.setAttribute('aria-pressed', String(dark));
+      }
+
+      els.themeToggle.addEventListener('click', () => {
+        const dark = !document.documentElement.classList.contains('dark');
+        applyTheme(dark);
+        try { localStorage.setItem(THEME_KEY, dark ? 'dark' : 'light'); } catch (e) { /* ignore */ }
+      });
+
+      // Follow the OS theme until the user picks one explicitly
+      if (window.matchMedia) {
+        const media = window.matchMedia('(prefers-color-scheme: dark)');
+        const onSystemChange = (e) => {
+          let saved = null;
+          try { saved = localStorage.getItem(THEME_KEY); } catch (err) { /* ignore */ }
+          if (!saved) applyTheme(e.matches);
+        };
+        if (media.addEventListener) media.addEventListener('change', onSystemChange);
+        else if (media.addListener) media.addListener(onSystemChange);
+      }
+
+      /* ---------- Init ---------- */
+      loadSettings();
+      applyTheme(document.documentElement.classList.contains('dark'));
+      syncControls();
+      renderChips();
+      render();
+    })();
+  </script>
+</body>
+</html>
